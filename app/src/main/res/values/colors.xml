@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="primary_blue">#0369A1</color>
+    <color name="primary_text">#0C4A6E</color>
+    <color name="splash_bg">#F0F9FF</color>
+    <color name="splash_gold">#F4D36C</color>
+    <color name="splash_gold_deep">#D4A62A</color>
+    <color name="splash_glow">#66FDE68A</color>
+</resources>
