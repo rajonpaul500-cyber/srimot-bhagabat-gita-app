@@ -3,6 +3,8 @@ export interface Chapter {
   id: string;
   title: string;
   pdfUrl: string;
+  rotation?: number;
+  enhanceScan?: boolean;
 }
 
 export interface Subject {
@@ -19,6 +21,6 @@ export interface SavedNote {
   date: string;
 }
 
-export type ViewState = 'splash' | 'subjects' | 'chapters' | 'content' | 'tools';
+export type ViewState = 'splash' | 'subjects' | 'chapters' | 'content' | 'tools' | 'gitaAudio';
 export type GuideMode = 'guide' | 'altGuide';
 export type ToolSubView = 'note' | 'timer' | 'vaishnavCalendar';

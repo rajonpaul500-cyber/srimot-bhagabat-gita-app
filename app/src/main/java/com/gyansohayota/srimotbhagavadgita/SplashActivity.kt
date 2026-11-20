@@ -1,5 +1,6 @@
 package com.gyansohayota.srimotbhagavadgitabanglaenglish
 
+import android.animation.Animator
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.content.Intent
@@ -11,22 +12,16 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import com.bumptech.glide.Glide
-import com.google.android.gms.ads.MobileAds
-import android.util.Log
 
 class SplashActivity : ComponentActivity() {
 
-    private val logTag = "SplashActivity"
+    private var splashHandler: Handler? = null
+    private var launchRunnable: Runnable? = null
+    private val runningAnimators = mutableListOf<Animator>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_splash)
-
-        try {
-            MobileAds.initialize(this)
-        } catch (e: Exception) {
-            Log.e(logTag, "MobileAds initialization failed (check AdMob app id)", e)
-        }
 
         val backgroundImageView = findViewById<ImageView>(R.id.backgroundImageView)
         val titleGlow = findViewById<View>(R.id.titleGlow)
@@ -65,28 +60,58 @@ class SplashActivity : ComponentActivity() {
         animateStar(starTwo, 0f, -24f, 22f, 260L, 1700L)
         animateStar(starThree, 96f, 72f, -26f, 340L, 1500L)
 
-        ObjectAnimator.ofFloat(titleGlow, View.SCALE_X, 1f, 1.18f, 1f).apply {
-            duration = 2200L
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
+        runningAnimators.add(
+            ObjectAnimator.ofFloat(titleGlow, View.SCALE_X, 1f, 1.18f, 1f).apply {
+                duration = 2200L
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+        )
 
-        ObjectAnimator.ofFloat(titleGlow, View.SCALE_Y, 1f, 1.18f, 1f).apply {
-            duration = 2200L
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
+        runningAnimators.add(
+            ObjectAnimator.ofFloat(titleGlow, View.SCALE_Y, 1f, 1.18f, 1f).apply {
+                duration = 2200L
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+        )
 
-        ObjectAnimator.ofFloat(titleGlow, View.ALPHA, 0.40f, 0.82f, 0.40f).apply {
-            duration = 2200L
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
+        runningAnimators.add(
+            ObjectAnimator.ofFloat(titleGlow, View.ALPHA, 0.40f, 0.82f, 0.40f).apply {
+                duration = 2200L
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+        )
 
-        Handler(Looper.getMainLooper()).postDelayed({
-            startActivity(Intent(this, MainActivity::class.java))
+        val launchHandler = Handler(Looper.getMainLooper())
+        splashHandler = launchHandler
+        val runnable = Runnable {
+            if (isFinishing || isDestroyed) return@Runnable
+            val intent = Intent(this, MainActivity::class.java)
+            val options = androidx.core.app.ActivityOptionsCompat.makeCustomAnimation(
+                this,
+                android.R.anim.fade_in,
+                android.R.anim.fade_out
+            )
+            startActivity(intent, options.toBundle())
             finish()
-        }, 1500L)
+        }
+        launchRunnable = runnable
+        launchHandler.postDelayed(runnable, 1500L)
+    }
+
+    override fun onDestroy() {
+        launchRunnable?.let { splashHandler?.removeCallbacks(it) }
+        launchRunnable = null
+        splashHandler = null
+        runningAnimators.forEach { animator ->
+            try {
+                animator.cancel()
+            } catch (_: Exception) {}
+        }
+        runningAnimators.clear()
+        super.onDestroy()
     }
 
     private fun animateStar(view: View, startX: Float, endX: Float, endY: Float, delay: Long, duration: Long) {
@@ -122,9 +147,10 @@ class SplashActivity : ComponentActivity() {
             repeatCount = ObjectAnimator.INFINITE
         }
 
-        AnimatorSet().apply {
+        val set = AnimatorSet().apply {
             playTogether(alphaAnimator, moveXAnimator, moveYAnimator, scaleAnimator, scaleYAnimator)
             start()
         }
+        runningAnimators.add(set)
     }
 }

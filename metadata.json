@@ -1,0 +1,6 @@
+{
+  "name": "শ্রীমদ্ভগবদ গীতা যথাযথ-অডিও সহ",
+  "description": "শ্রীমদ্ভগবদ গীতা যথাযথের বাংলা ও ইংরেজি অধ্যায়, অডিও এবং ইন-অ্যাপ PDF পাঠসহ একটি মোবাইল-ফ্রেন্ডলি অ্যাপ।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

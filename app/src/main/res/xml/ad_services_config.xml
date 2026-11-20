@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ad-services-config>
+    <!-- Disable Privacy Sandbox Measurement Service to prevent onNullBinding logcat errors on devices/emulators without AdServices -->
+    <attribution allowAdPartners="false" />
+    <topics allowAdPartners="false" />
+    <protected-audience allowAdPartners="false" />
+</ad-services-config>

@@ -1,21 +1,31 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Menu, X, ArrowLeft, Home, Search, Wrench, ChevronRight, Shield, MessageCircle, Star, LogOut, StickyNote, Timer as TimerIcon, Play, Pause, Square as SquareIcon, RotateCcw, CalendarDays, BookOpen, Save, Trash2, Plus, Mail, AlertCircle, WifiOff, FileText, Lock, Eye, Info, SkipBack, SkipForward, Music } from 'lucide-react';
+import { Menu, X, ArrowLeft, Home, Search, Wrench, ChevronRight, Shield, MessageCircle, Star, LogOut, StickyNote, Timer as TimerIcon, Play, Pause, Square as SquareIcon, RotateCcw, CalendarDays, BookOpen, Save, Trash2, Plus, Mail, AlertCircle, WifiOff, FileText, Lock, Eye, Info, SkipBack, SkipForward, Music, Headphones, Bell, Download, CheckCircle2, RefreshCw, HardDrive } from 'lucide-react';
 import { SUBJECTS_DATA } from './constants';
 import { GITA_CHAPTER_1_TO_18_AUDIO_URLS } from './gitaChapter1To18Audio';
 import { GITA_CHAPTER_11_TO_16_AUDIO_URLS } from './gitaChapter11To16Audio';
 import { ViewState, Subject, Chapter, GuideMode, ToolSubView, SavedNote } from './types';
+import { CustomPdfViewer } from './CustomPdfViewer';
+import { GitaAudioScreen } from './GitaAudioScreen';
+import { getChapterCacheKey, pdfDownloadManager, sanitizeCacheKey, usePdfDownloads } from './pdfDownloadManager';
 
 declare global {
   interface Window {
     Android?: {
       triggerInterstitialAd?: () => void;
       triggerInterstitialAdWithAction?: (action: string) => void;
+      setBannerVisible?: (visible: boolean) => void;
+      isNetworkAvailable?: () => boolean;
       openExternalUrl?: (url: string) => void;
       exitApp?: () => void;
+      sendTestVaishnavNotification?: () => void;
+      scheduleVaishnavReminders?: () => void;
+      openPlayStore?: () => void;
     };
     showExitPopupFromNative?: () => void;
     onInterstitialDismissedFromNative?: (action: string) => void;
+    openVaishnavCalendarFromNative?: (dateStr?: string) => void;
+    onNativeNetworkChanged?: (online: boolean) => void;
   }
 }
 
@@ -28,13 +38,22 @@ const App: React.FC = () => {
   const [currentSubject, setCurrentSubject] = useState<Subject | null>(null);
   const [currentChapter, setCurrentChapter] = useState<Chapter | null>(null);
   const [guideMode, setGuideMode] = useState<GuideMode>('guide');
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [isOffline, setIsOffline] = useState(() =>
+    window.Android?.isNetworkAvailable ? !window.Android.isNetworkAvailable() : !navigator.onLine
+  );
   const [showExitPopup, setShowExitPopup] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showSourcesModal, setShowSourcesModal] = useState(false);
   const [showAdminPopup, setShowAdminPopup] = useState(false);
   const [showComingSoon, setShowComingSoon] = useState(false);
-  const [showNoInternetModal, setShowNoInternetModal] = useState(false);
+  const [noInternetReason, setNoInternetReason] = useState<'audio' | 'pdf' | 'general' | null>(null);
+  const { cachedSizes, downloads } = usePdfDownloads();
+  const [deleteTarget, setDeleteTarget] = useState<{ title: string; cacheKey: string } | null>(null);
+  const [pendingOpenAfterDownload, setPendingOpenAfterDownload] = useState<{
+    safeKey: string;
+    chapter: Chapter;
+    subject: Subject;
+  } | null>(null);
 
   const DEFAULT_PDF_AUDIO_URL = "https://res.cloudinary.com/dllggegzk/video/upload/v1774166700/1st_slock_o6jseq.wav";
   const GITA_CHAPTER_3_1_AUDIO_URLS = useMemo(
@@ -564,6 +583,8 @@ const App: React.FC = () => {
   const [pdfAudioError, setPdfAudioError] = useState<string | null>(null);
   const [showPdfAudioList, setShowPdfAudioList] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [gitaAudioChapterId, setGitaAudioChapterId] = useState<string | null>(null);
+  const [isStandaloneGitaAudioPlaying, setIsStandaloneGitaAudioPlaying] = useState(false);
 
   // --- Tool States ---
   const [noteInput, setNoteInput] = useState('');
@@ -748,6 +769,22 @@ const App: React.FC = () => {
   });
   const [vaishnavPopupDate, setVaishnavPopupDate] = useState<string | null>(null);
 
+  useEffect(() => {
+    window.openVaishnavCalendarFromNative = (dateStr?: string) => {
+      setView('tools');
+      setActiveTool('vaishnavCalendar');
+      if (dateStr) {
+        setVaishnavSelectedDate(dateStr);
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+          const y = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10) - 1;
+          setVaishnavMonth(new Date(y, m, 1));
+        }
+      }
+    };
+  }, []);
+
   const vaishnavPopupEvents = useMemo(
     () => vaishnavEvents.filter(e => e.date === vaishnavPopupDate),
     [vaishnavEvents, vaishnavPopupDate]
@@ -757,16 +794,38 @@ const App: React.FC = () => {
     localStorage.setItem('user_notes_v3', JSON.stringify(savedNotes));
   }, [savedNotes]);
 
+  const checkIsOnline = useCallback((): boolean => {
+    if (window.Android?.isNetworkAvailable) {
+      const online = Boolean(window.Android.isNetworkAvailable());
+      setIsOffline(!online);
+      return online;
+    }
+    const online = navigator.onLine;
+    setIsOffline(!online);
+    return online;
+  }, []);
+
   useEffect(() => {
+    checkIsOnline();
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
+    window.onNativeNetworkChanged = (online: boolean) => {
+      setIsOffline(!online);
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
+      window.onNativeNetworkChanged = undefined;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [checkIsOnline]);
+
+  // Show Banner Ad ONLY on Chapters page and PDF reading screen (NOT on Home page)
+  useEffect(() => {
+    const shouldShowBanner = !isSearchOpen && (view === 'chapters' || view === 'content');
+    window.Android?.setBannerVisible?.(shouldShowBanner);
+  }, [view, isSearchOpen, isOffline]);
 
   useEffect(() => {
     if (view !== 'content') {
@@ -787,13 +846,21 @@ const App: React.FC = () => {
 
     if (!isPdfAudioPlaying) return;
 
+    if (!checkIsOnline()) {
+      a.pause();
+      setIsPdfAudioPlaying(false);
+      setPdfAudioError('অডিও শুনতে ইন্টারনেট সংযোগ লাগবে');
+      setNoInternetReason('audio');
+      return;
+    }
+
     setPdfAudioError(null);
     a.currentTime = 0;
     a.play().catch(() => {
       setIsPdfAudioPlaying(false);
-      setPdfAudioError(`শ্লোক-${pdfAudioIndex + 1} play করা যাচ্ছে না`);
+      setPdfAudioError(`শ্লোক-${pdfAudioIndex + 1} play করা যাচ্ছে না। ইন্টারনেট পরীক্ষা করুন।`);
     });
-  }, [view, pdfAudioIndex, pdfAudioUrls, isPdfAudioPlaying]);
+  }, [view, pdfAudioIndex, pdfAudioUrls, isPdfAudioPlaying, checkIsOnline]);
 
   useEffect(() => {
     window.onInterstitialDismissedFromNative = (action: string) => {
@@ -874,69 +941,123 @@ const App: React.FC = () => {
     }, 180);
   };
 
-  const handleChapterClick = (chapter: Chapter, subject: Subject) => {
-    if (isOffline) {
-      setShowNoInternetModal(true);
+  useEffect(() => {
+    if (view === 'chapters') {
+      void pdfDownloadManager.refreshCache();
+    }
+  }, [view]);
+
+  const openPdfDirectly = useCallback((chapter: Chapter, subject: Subject) => {
+    setCurrentSubject(subject);
+    setCurrentChapter(chapter);
+    setShowPdfAudioList(false);
+    if (subject.id === '3') {
+      if (chapter.id === '3.0') {
+        setPdfAudioUrls([]);
+      } else {
+        const fixedChapterAudioUrls = GITA_CHAPTER_1_TO_18_AUDIO_URLS[chapter.id];
+        if (fixedChapterAudioUrls?.length) {
+          setPdfAudioUrls([...fixedChapterAudioUrls]);
+        } else {
+          try {
+            const key = `pdf_audio_playlist_${subject.id}_${chapter.id}`;
+            const raw = localStorage.getItem(key);
+            const list = raw ? (JSON.parse(raw) as unknown) : null;
+            if (Array.isArray(list) && list.every(x => typeof x === 'string') && list.length > 0) {
+              setPdfAudioUrls(list as string[]);
+            } else {
+              setPdfAudioUrls([DEFAULT_PDF_AUDIO_URL, DEFAULT_PDF_AUDIO_URL]);
+            }
+          } catch {
+            setPdfAudioUrls([DEFAULT_PDF_AUDIO_URL, DEFAULT_PDF_AUDIO_URL]);
+          }
+        }
+      }
+    } else {
+      setPdfAudioUrls([DEFAULT_PDF_AUDIO_URL]);
+    }
+    setPdfAudioIndex(0);
+    setIsPdfAudioPlaying(false);
+    setPdfAudioError(null);
+    setView('content');
+    setIsSearchOpen(false);
+    setSearchQuery('');
+  }, [DEFAULT_PDF_AUDIO_URL]);
+
+  const openPdfWithInterstitial = useCallback((chapter: Chapter, subject: Subject) => {
+    chapterClickCounter.current += 1;
+    userActionCounterRef.current += 1;
+
+    // Offline downloaded PDFs open immediately without waiting for network ads
+    if (!checkIsOnline() || !ADS_ENABLED) {
+      openPdfDirectly(chapter, subject);
       return;
     }
+
+    lastInterstitialActionRef.current = userActionCounterRef.current;
+    lastInterstitialTsRef.current = Date.now();
+    const actionKey = `open_pdf_${subject.id}_${chapter.id}_${chapterClickCounter.current}`;
+    runWithInterstitial(actionKey, () => openPdfDirectly(chapter, subject));
+  }, [checkIsOnline, openPdfDirectly]);
+
+  // After outside chapter download finishes, automatically show Interstitial Ad then open PDF
+  useEffect(() => {
+    if (!pendingOpenAfterDownload) return;
+    const { safeKey, chapter, subject } = pendingOpenAfterDownload;
+    const isNowDownloaded = (cachedSizes[safeKey] || 0) > 500;
+    if (isNowDownloaded) {
+      setPendingOpenAfterDownload(null);
+      openPdfWithInterstitial(chapter, subject);
+      return;
+    }
+    if (downloads[safeKey]?.status === 'error') {
+      setPendingOpenAfterDownload(null);
+    }
+  }, [cachedSizes, downloads, pendingOpenAfterDownload, openPdfWithInterstitial]);
+
+  const handleChapterClick = (chapter: Chapter, subject: Subject) => {
     if (!chapter.pdfUrl || chapter.pdfUrl === "") {
       triggerComingSoon();
       return;
     }
+    const cacheKey = getChapterCacheKey(subject.id, chapter.id, chapter.pdfUrl);
+    const safeKey = sanitizeCacheKey(cacheKey);
+    const alreadyDownloaded =
+      (cachedSizes[safeKey] || 0) > 500 ||
+      pdfDownloadManager.isCached(cacheKey);
 
-    chapterClickCounter.current += 1;
-    userActionCounterRef.current += 1;
-    const openPdf = () => {
-      setCurrentSubject(subject);
-      setCurrentChapter(chapter);
-      setShowPdfAudioList(false);
-      if (subject.id === '3') {
-        if (chapter.id === '3.0') {
-          setPdfAudioUrls([]);
-        } else {
-          const fixedChapterAudioUrls = GITA_CHAPTER_1_TO_18_AUDIO_URLS[chapter.id];
-          if (fixedChapterAudioUrls?.length) {
-            setPdfAudioUrls([...fixedChapterAudioUrls]);
-          } else {
-            try {
-              const key = `pdf_audio_playlist_${subject.id}_${chapter.id}`;
-              const raw = localStorage.getItem(key);
-              const list = raw ? (JSON.parse(raw) as unknown) : null;
-              if (Array.isArray(list) && list.every(x => typeof x === 'string') && list.length > 0) {
-                setPdfAudioUrls(list as string[]);
-              } else {
-                setPdfAudioUrls([DEFAULT_PDF_AUDIO_URL, DEFAULT_PDF_AUDIO_URL]);
-              }
-            } catch {
-              setPdfAudioUrls([DEFAULT_PDF_AUDIO_URL, DEFAULT_PDF_AUDIO_URL]);
-            }
-          }
-        }
-      } else {
-        setPdfAudioUrls([DEFAULT_PDF_AUDIO_URL]);
+    // Already downloaded PDFs open directly (interstitial if online, instant if offline)
+    if (alreadyDownloaded) {
+      if (pendingOpenAfterDownload?.safeKey === safeKey) {
+        setPendingOpenAfterDownload(null);
       }
-      setPdfAudioIndex(0);
-      setIsPdfAudioPlaying(false);
-      setPdfAudioError(null);
-      setView('content');
+      openPdfWithInterstitial(chapter, subject);
+      return;
+    }
+
+    // Not downloaded yet: requires internet to download outside on Chapters page first
+    if (!checkIsOnline()) {
+      setNoInternetReason('pdf');
+      return;
+    }
+
+    // If clicked from Search or another view, navigate to Chapters page so progress is visible outside
+    if (isSearchOpen || view !== 'chapters' || currentSubject?.id !== subject.id) {
+      setCurrentSubject(subject);
+      const isAlt = (subject.altChapters || []).some(c => c.id === chapter.id);
+      setGuideMode(isAlt ? 'altGuide' : 'guide');
+      setView('chapters');
       setIsSearchOpen(false);
       setSearchQuery('');
     }
 
-    if (!shouldShowInterstitialNow()) {
-      openPdf()
-      return
-    }
-
-    lastInterstitialActionRef.current = userActionCounterRef.current
-    lastInterstitialTsRef.current = Date.now()
-    const actionKey = `open_pdf_${subject.id}_${chapter.id}_${chapterClickCounter.current}`
-    runWithInterstitial(actionKey, openPdf)
+    setPendingOpenAfterDownload({ safeKey, chapter, subject });
+    pdfDownloadManager.startDownload(chapter.pdfUrl, cacheKey);
   };
 
   const handleToolClick = (toolId: ToolSubView) => {
-    if (isOffline) {
-      setShowNoInternetModal(true);
+    if (!checkIsOnline()) {
+      setNoInternetReason('general');
       return;
     }
     userActionCounterRef.current += 1;
@@ -958,9 +1079,13 @@ const App: React.FC = () => {
 
   const handleBack = useCallback(() => {
     if (view === 'content') setView('chapters');
+    else if (view === 'gitaAudio') {
+      if (gitaAudioChapterId) setGitaAudioChapterId(null);
+      else setView('subjects');
+    }
     else if (view === 'chapters' || view === 'tools') { setView('subjects'); setCurrentSubject(null); }
     else if (view === 'subjects') setShowExitPopup(true);
-  }, [view]);
+  }, [view, gitaAudioChapterId]);
 
   const toggleDrawer = () => setIsDrawerOpen(!isDrawerOpen);
   const formatTime = (s: number) => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
@@ -1113,25 +1238,204 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {view === 'chapters' && currentSubject && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-5 duration-500">
-            <div className="flex bg-white/50 backdrop-blur-md p-1.5 rounded-2xl gap-1.5 mb-8 border border-white shadow-sm">
-              <button onClick={() => setGuideMode('guide')} className={`flex-1 py-3.5 rounded-xl font-black text-sm transition-all ${guideMode === 'guide' ? 'bg-sky-600 text-white shadow-lg' : 'text-blue-900/40'}`}>বাংলা ভার্সন</button>
-              <button onClick={() => setGuideMode('altGuide')} className={`flex-1 py-3.5 rounded-xl font-black text-sm transition-all ${guideMode === 'altGuide' ? 'bg-blue-600 text-white shadow-lg' : 'text-blue-900/40'}`}>English Version</button>
+        {view === 'chapters' && currentSubject && (() => {
+          const activeChapters = guideMode === 'guide' ? currentSubject.chapters : (currentSubject.altChapters || []);
+          let downloadedCount = 0;
+          activeChapters.forEach(ch => {
+            if (!ch.pdfUrl) return;
+            const sk = sanitizeCacheKey(getChapterCacheKey(currentSubject.id, ch.id, ch.pdfUrl));
+            const sz = cachedSizes[sk] || 0;
+            if (sz > 500) {
+              downloadedCount += 1;
+            }
+          });
+
+          return (
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-5 duration-500">
+            <div
+              className="flex backdrop-blur-md p-1.5 rounded-2xl gap-1.5 border border-white/75 shadow-sm"
+              style={{ backgroundColor: 'rgba(255, 255, 255, 0.58)' }}
+            >
+              <button onClick={() => setGuideMode('guide')} className={`flex-1 py-3.5 rounded-xl font-black text-sm transition-all ${guideMode === 'guide' ? 'bg-sky-600 text-white shadow-lg' : 'text-blue-950/80'}`}>বাংলা ভার্সন</button>
+              <button onClick={() => setGuideMode('altGuide')} className={`flex-1 py-3.5 rounded-xl font-black text-sm transition-all ${guideMode === 'altGuide' ? 'bg-blue-600 text-white shadow-lg' : 'text-blue-950/80'}`}>English Version</button>
             </div>
-            <div className="space-y-3.5 pb-10">
-              {(guideMode === 'guide' ? currentSubject.chapters : (currentSubject.altChapters || [])).map(c => (
-                <button key={c.id} onClick={() => handleChapterClick(c, currentSubject)} className="w-full bg-white/80 p-5 rounded-2xl flex items-center justify-between border border-sky-100 shadow-sm hover:bg-white active:scale-[0.98] transition-all">
-                  <div className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-xl bg-sky-100/60 flex items-center justify-center text-blue-700 font-black text-xs">{c.id.split('.')[1] || '•'}</div>
-                    <span className="text-blue-900 font-bold text-left text-sm">{c.title}</span>
+
+            {/* Offline Storage Summary Banner (no MB size shown) */}
+            <div
+              className="backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/75 shadow-sm flex items-center justify-between gap-2"
+              style={{ backgroundColor: 'rgba(255, 255, 255, 0.62)' }}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${downloadedCount > 0 ? 'bg-emerald-100/90 text-emerald-700' : 'bg-sky-100/90 text-sky-700'}`}>
+                  <HardDrive size={14} />
+                </div>
+                <span className="text-[11px] font-bold text-slate-900 truncate">
+                  {downloadedCount > 0
+                    ? `অফলাইনে ডাউনলোড করা: ${downloadedCount}/${activeChapters.length} টি (ইন্টারনেট ছাড়াই পড়া যাবে)`
+                    : 'অধ্যায়ে ক্লিক করে বা সেভ বাটনে ট্যাপ করে ডাউনলোড করুন'}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-3 pb-10">
+              {activeChapters.map(c => {
+                const cacheKey = getChapterCacheKey(currentSubject.id, c.id, c.pdfUrl);
+                const safeKey = sanitizeCacheKey(cacheKey);
+                const savedSize = cachedSizes[safeKey] || 0;
+                const isDownloaded = savedSize > 500;
+                const dlState = downloads[safeKey];
+                const isDownloading = !isDownloaded && dlState?.status === 'downloading';
+                const isError = !isDownloaded && dlState?.status === 'error';
+                const isPendingOpen = pendingOpenAfterDownload?.safeKey === safeKey;
+
+                return (
+                  <div
+                    key={c.id}
+                    className={`w-full rounded-2xl border backdrop-blur-md shadow-sm transition-all overflow-hidden ${
+                      isDownloaded
+                        ? 'border-emerald-300/90 shadow-md'
+                        : isDownloading
+                        ? 'border-sky-400/90 shadow-md'
+                        : 'border-white/75'
+                    }`}
+                    style={{
+                      backgroundColor: isDownloaded
+                        ? 'rgba(255, 255, 255, 0.68)'
+                        : isDownloading
+                        ? 'rgba(255, 255, 255, 0.70)'
+                        : 'rgba(255, 255, 255, 0.62)'
+                    }}
+                  >
+                    <div className="p-3.5 flex items-center justify-between gap-2.5">
+                      {/* Main tappable chapter area: downloads outside first if needed, then interstitial -> PDF */}
+                      <button
+                        onClick={() => handleChapterClick(c, currentSubject)}
+                        className="flex-1 min-w-0 flex items-center gap-3 text-left active:scale-[0.99] transition-transform"
+                      >
+                        <div
+                          className={`h-10 w-10 rounded-xl flex items-center justify-center font-black text-xs shrink-0 border ${
+                            isDownloaded
+                              ? 'bg-emerald-100/90 text-emerald-900 border-emerald-300/70'
+                              : 'bg-sky-100/90 text-blue-950 border-sky-200/80'
+                          }`}
+                        >
+                          {c.id.split('.')[1] || '•'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-slate-950 font-black text-left text-sm block leading-snug">
+                            {c.title}
+                          </span>
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            {isDownloaded ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-emerald-800 bg-emerald-50/95 px-2 py-0.5 rounded-full border border-emerald-300/80">
+                                <CheckCircle2 size={11} />
+                                ডাউনলোড সম্পন্ন • অফলাইনে পড়ুন
+                              </span>
+                            ) : isDownloading ? (
+                              <span className="text-[10px] font-bold text-sky-900">
+                                ডাউনলোড হচ্ছে {dlState.percent}%
+                                {isPendingOpen ? ' • সম্পূর্ণ হলে খুলবে...' : ''}
+                              </span>
+                            ) : isError ? (
+                              <span className="text-[10px] font-bold text-rose-700">
+                                ডাউনলোড ব্যর্থ হয়েছে • পুনরায় চেষ্টা করুন
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-700">
+                                ডাউনলোড করা নেই
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Right side action buttons: Download / Progress+Cancel / Delete */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isDownloaded ? (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setDeleteTarget({
+                                title: c.title,
+                                cacheKey
+                              });
+                            }}
+                            className="h-10 w-10 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/70 flex items-center justify-center active:scale-90 transition-all"
+                            aria-label="ডাউনলোড ডিলিট করুন"
+                            title="স্টোরেজ থেকে ডিলিট করুন"
+                          >
+                            <Trash2 size={17} />
+                          </button>
+                        ) : isDownloading ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-1 rounded-lg bg-sky-100 text-sky-800 font-mono font-black text-[11px] min-w-[40px] text-center">
+                              {dlState.percent}%
+                            </span>
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                if (pendingOpenAfterDownload?.safeKey === safeKey) {
+                                  setPendingOpenAfterDownload(null);
+                                }
+                                pdfDownloadManager.cancelDownload(cacheKey);
+                              }}
+                              className="h-10 w-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center active:scale-90 transition-all"
+                              aria-label="ডাউনলোড বাতিল করুন"
+                              title="বাতিল করুন"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (!c.pdfUrl) {
+                                triggerComingSoon();
+                                return;
+                              }
+                              if (!checkIsOnline()) {
+                                setNoInternetReason('pdf');
+                                return;
+                              }
+                              pdfDownloadManager.startDownload(c.pdfUrl, cacheKey);
+                            }}
+                            className={`h-10 px-3 rounded-xl font-bold text-[11px] flex items-center gap-1.5 shadow-sm active:scale-90 transition-all ${
+                              isError
+                                ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                                : 'bg-sky-600 hover:bg-sky-700 text-white'
+                            }`}
+                            aria-label="ডাউনলোড করুন"
+                            title="অফলাইনে ডাউনলোড করুন"
+                          >
+                            {isError ? <RefreshCw size={15} /> : <Download size={15} />}
+                            <span>{isError ? 'আবার' : 'সেভ'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Smooth Monotonic Inline Progress Bar while Downloading */}
+                    {isDownloading && (
+                      <div className="px-3.5 pb-3 pt-0.5">
+                        <div className="w-full h-2 bg-slate-200/90 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-sky-500 to-blue-600 rounded-full transition-all duration-200 ease-out"
+                            style={{ width: `${Math.max(2, dlState.percent)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <ChevronRight size={18} className="text-sky-400" />
-                </button>
-              ))}
+                );
+              })}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {view === 'tools' && (
           <div className="animate-in fade-in duration-500">
@@ -1145,6 +1449,29 @@ const App: React.FC = () => {
             <div className="bg-white/90 backdrop-blur-sm rounded-[36px] p-6 min-h-[480px] shadow-2xl border-2 border-white/50 pb-12 overflow-hidden animate-in zoom-in-95 duration-500">
               {activeTool === 'vaishnavCalendar' && (
                 <div className="space-y-5 animate-in fade-in slide-in-from-right-4">
+                  {/* Reminder Banner */}
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 rounded-2xl p-3 flex items-center justify-between gap-2 shadow-sm">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-700 flex items-center justify-center shrink-0">
+                        <Bell size={16} className="text-amber-700" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold text-amber-950 leading-tight">অনুষ্ঠান অনুস্মারক নোটিফিকেশন সক্রিয়</p>
+                        <p className="text-[9px] text-amber-800/80 mt-0.5 leading-tight">প্রতিটি তিথির পূর্বের দিন রাত ৮:০০টায় ফোনে নোটিফিকেশন যাবে</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (window.Android?.sendTestVaishnavNotification) {
+                          window.Android.sendTestVaishnavNotification();
+                        }
+                      }}
+                      className="shrink-0 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[9px] font-bold shadow-sm active:scale-95 transition-all"
+                    >
+                      টেস্ট নোটিফিকেশন
+                    </button>
+                  </div>
+
                   <div className="flex items-center justify-between bg-sky-100/50 rounded-2xl p-3">
                     <button
                       onClick={() => setVaishnavMonth(new Date(vaishnavMonth.getFullYear(), vaishnavMonth.getMonth() - 1, 1))}
@@ -1405,21 +1732,38 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
+        {view === 'gitaAudio' && (
+          <GitaAudioScreen
+            selectedChapterId={gitaAudioChapterId}
+            onSelectChapter={setGitaAudioChapterId}
+            normalizeAudioUrl={normalizePdfAudioUrl}
+            onPlayingStateChange={setIsStandaloneGitaAudioPlaying}
+            isOffline={isOffline}
+            checkIsOnline={checkIsOnline}
+            onRequireInternet={() => setNoInternetReason('audio')}
+          />
+        )}
       </main>
 
       {/* Custom 'No Internet' Modal */}
-      {showNoInternetModal && (
-        <div className="fixed inset-0 bg-blue-950/90 backdrop-blur-2xl z-[15000] flex items-center justify-center p-8">
+      {noInternetReason && (
+        <div className="fixed inset-0 bg-blue-950/90 backdrop-blur-2xl z-[18000] flex items-center justify-center p-8">
           <div className="bg-white rounded-[40px] w-full max-w-[340px] p-10 text-center shadow-2xl animate-in zoom-in-95 duration-300">
             <div className="h-20 w-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <WifiOff size={40} className="text-amber-500"/>
             </div>
-            <h3 className="text-xl font-black text-blue-950 mb-4 brand-font leading-tight">ইন্টারনেট সংযোগ নেই!</h3>
-            <p className="text-blue-900/60 font-bold text-xs mb-8 leading-relaxed px-2">
-              পিডিএফ অথবা টুলস ব্যবহার করতে আপনার ডিভাইসে ইন্টারনেট কানেকশন প্রয়োজন। দয়া করে ইন্টারনেট চালু করুন।
+            <h3 className="text-xl font-black text-blue-950 mb-4 brand-font leading-tight">
+              {noInternetReason === 'audio' ? 'ইন্টারনেট সংযোগ প্রয়োজন!' : 'ইন্টারনেট সংযোগ নেই!'}
+            </h3>
+            <p className="text-blue-900/70 font-bold text-xs mb-8 leading-relaxed px-2">
+              {noInternetReason === 'audio'
+                ? 'অডিও ও মিউজিক শুনতে ইন্টারনেট সংযোগ লাগবে। ইন্টারনেট ছাড়া অডিও চলবে না। তবে আপনার ডাউনলোড করা পিডিএফগুলো ইন্টারনেট ছাড়াই পড়তে পারবেন।'
+                : noInternetReason === 'pdf'
+                ? 'নতুন পিডিএফ ডাউনলোড করতে ইন্টারনেট সংযোগ প্রয়োজন। আগে থেকে ডাউনলোড করা পিডিএফগুলো ইন্টারনেট ছাড়াই খুলতে পারবেন।'
+                : 'এই সুবিধাটি ব্যবহার করতে আপনার ডিভাইসে ইন্টারনেট কানেকশন প্রয়োজন। দয়া করে ইন্টারনেট চালু করুন।'}
             </p>
             <button 
-              onClick={() => setShowNoInternetModal(false)} 
+              onClick={() => setNoInternetReason(null)} 
               className="w-full py-4 bg-blue-700 text-white rounded-2xl font-black text-xs shadow-lg active:scale-95 transition-all"
             >
               ঠিক আছে
@@ -1428,162 +1772,77 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Delete Downloaded PDF Confirmation Modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 bg-blue-950/80 backdrop-blur-md z-[15000] flex items-center justify-center p-6"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="bg-white rounded-[32px] w-full max-w-[330px] p-7 text-center shadow-2xl animate-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="h-16 w-16 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={30} className="text-rose-500" />
+            </div>
+            <h3 className="text-lg font-black text-blue-950 mb-2 leading-tight">
+              ডাউনলোড মুছে ফেলবেন?
+            </h3>
+            <p className="text-slate-600 font-semibold text-xs mb-6 leading-relaxed">
+              “{deleteTarget.title}” মোবাইলের স্টোরেজ থেকে মুছে ফেলা হবে। পরবর্তীতে পড়তে হলে আবার ডাউনলোড করতে হবে।
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 py-3.5 bg-slate-100 text-slate-700 rounded-2xl font-black text-xs active:scale-95 transition-all"
+              >
+                বাতিল
+              </button>
+              <button
+                onClick={async () => {
+                  const keyToDelete = deleteTarget.cacheKey;
+                  setDeleteTarget(null);
+                  await pdfDownloadManager.deleteDownloadedPdf(keyToDelete);
+                }}
+                className="flex-1 py-3.5 bg-rose-600 text-white rounded-2xl font-black text-xs shadow-lg active:scale-95 transition-all"
+              >
+                ডিলিট করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edge-to-Edge PDF Viewer Outside Main Wrapper */}
       {view === 'content' && currentChapter && (
-        <div className="fixed inset-0 bg-white z-[9999] flex flex-col animate-in fade-in duration-300">
-          <div
-            className="absolute top-0 left-0 right-0 z-[10001] bg-transparent"
-          >
-            {!showPdfAudioPlayer ? (
-              <div className="px-2 pt-2 pb-1.5 flex items-center justify-between gap-2 bg-white/70 backdrop-blur-md border-b border-slate-200/70">
-                <button
-                  onClick={() => setView('chapters')}
-                  className="p-2 bg-white text-blue-800 rounded-full shadow-sm border border-slate-200 active:scale-90 transition-all"
-                  aria-label="Back"
-                >
-                  <ArrowLeft size={22} strokeWidth={3} />
-                </button>
-
-                <div className="flex-1 px-2">
-                  <div className="text-blue-950 font-black text-[12px] tracking-tight truncate">{currentChapter.title}</div>
-                </div>
-
-                <div className="w-11" />
-              </div>
-            ) : (
-              <div className="px-2 pt-2 pb-1.5 flex flex-col gap-2 bg-gradient-to-b from-white/78 via-white/58 to-transparent backdrop-blur-md">
-                <div className="w-full flex items-center justify-center">
-                  <div
-                    className="w-full rounded-2xl px-3 py-2 border border-white/10 shadow-md"
-                    style={{ backgroundColor: '#0c4a6e' }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Music size={16} className="text-white/90" />
-                        <div className="min-w-0">
-                          <div className="text-white font-black text-[10px] uppercase tracking-tighter truncate">
-                            {currentChapter.title}
-                          </div>
-                          <div className="mt-0.5 flex items-center gap-2">
-                            <div className="px-2 py-0.5 rounded-full bg-white/10 border border-white/10 text-white/90 text-[9px] font-black tracking-tight">
-                              শ্লোক-{pdfAudioIndex + 1}
-                            </div>
-                            {isPdfAudioPlaying && (
-                              <div className="flex items-end gap-0.5 h-3" aria-label="Playing">
-                                <div className="w-0.5 bg-white/90 rounded-full animate-pulse" style={{ height: '6px' }} />
-                                <div className="w-0.5 bg-white/90 rounded-full animate-pulse" style={{ height: '10px', animationDelay: '120ms' }} />
-                                <div className="w-0.5 bg-white/90 rounded-full animate-pulse" style={{ height: '7px', animationDelay: '240ms' }} />
-                                <div className="w-0.5 bg-white/90 rounded-full animate-pulse" style={{ height: '11px', animationDelay: '360ms' }} />
-                              </div>
-                            )}
-                          </div>
-                          {pdfAudioError && (
-                            <div className="mt-1 text-[10px] font-bold text-rose-200 truncate">
-                              {pdfAudioError}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-center gap-2 shrink-0">
-                        <button
-                          onClick={() => {
-                            if (pdfAudioUrls.length <= 1) return;
-                            setPdfAudioIndex(i => (i - 1 + pdfAudioUrls.length) % pdfAudioUrls.length);
-                            setIsPdfAudioPlaying(true);
-                          }}
-                          className="p-2 bg-white/10 rounded-xl border border-white/10 shadow-sm active:scale-90 transition-all"
-                          aria-label="Previous audio"
-                          disabled={pdfAudioUrls.length <= 1}
-                        >
-                          <SkipBack size={18} className={pdfAudioUrls.length <= 1 ? 'text-white/30' : 'text-white/90'} />
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            const a = audioRef.current;
-                            if (!a) return;
-                            if (a.paused) {
-                              setPdfAudioError(null);
-                              a.play().then(() => setIsPdfAudioPlaying(true)).catch(() => {
-                                setIsPdfAudioPlaying(false);
-                                setPdfAudioError(`শ্লোক-${pdfAudioIndex + 1} play করা যাচ্ছে না`);
-                              });
-                            } else {
-                              a.pause();
-                              setIsPdfAudioPlaying(false);
-                            }
-                          }}
-                          className="p-2 bg-white rounded-xl shadow-sm active:scale-90 transition-all"
-                          aria-label={isPdfAudioPlaying ? 'Pause audio' : 'Play audio'}
-                        >
-                          {isPdfAudioPlaying ? <Pause size={18} className="text-blue-900" /> : <Play size={18} className="text-blue-900 ml-0.5" />}
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            if (pdfAudioUrls.length <= 1) return;
-                            setPdfAudioIndex(i => (i + 1) % pdfAudioUrls.length);
-                            setIsPdfAudioPlaying(true);
-                          }}
-                          className="p-2 bg-white/10 rounded-xl border border-white/10 shadow-sm active:scale-90 transition-all"
-                          aria-label="Next audio"
-                          disabled={pdfAudioUrls.length <= 1}
-                        >
-                          <SkipForward size={18} className={pdfAudioUrls.length <= 1 ? 'text-white/30' : 'text-white/90'} />
-                        </button>
-
-                        <button
-                          onClick={() => setShowPdfAudioList(true)}
-                          className="px-3 py-2 bg-white/10 rounded-xl border border-white/10 shadow-sm text-[10px] font-black text-white/90 active:scale-95 transition-all"
-                        >
-                          Change
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="w-full flex items-center justify-start px-0.5">
-                  <button
-                    onClick={() => setView('chapters')}
-                    className="p-2 bg-white text-blue-800 rounded-full shadow-sm border border-slate-200 active:scale-95 transition-all"
-                    aria-label="Back"
-                  >
-                    <ArrowLeft size={22} strokeWidth={3} />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {showPdfAudioPlayer && (
-              <audio
-                ref={audioRef}
-                src={normalizePdfAudioUrl(pdfAudioUrls[pdfAudioIndex] || DEFAULT_PDF_AUDIO_URL)}
-                onError={() => {
+        <div className="fixed inset-0 bg-[#0e1015] z-[9999] flex flex-col animate-in fade-in duration-200">
+          {showPdfAudioPlayer && (
+            <audio
+              ref={audioRef}
+              src={normalizePdfAudioUrl(pdfAudioUrls[pdfAudioIndex] || DEFAULT_PDF_AUDIO_URL)}
+              onError={() => {
+                setIsPdfAudioPlaying(false);
+                setPdfAudioError(`শ্লোক-${pdfAudioIndex + 1} play করা যাচ্ছে না`);
+              }}
+              onEnded={() => {
+                if (pdfAudioUrls.length > 1) {
+                  setPdfAudioIndex(i => (i + 1) % pdfAudioUrls.length);
+                  setIsPdfAudioPlaying(true);
+                } else {
                   setIsPdfAudioPlaying(false);
-                  setPdfAudioError(`শ্লোক-${pdfAudioIndex + 1} play করা যাচ্ছে না`);
-                }}
-                onEnded={() => {
-                  if (pdfAudioUrls.length > 1) {
-                    setPdfAudioIndex(i => (i + 1) % pdfAudioUrls.length);
-                    setIsPdfAudioPlaying(true);
-                  } else {
-                    setIsPdfAudioPlaying(false);
-                  }
-                }}
-                onPlay={() => setIsPdfAudioPlaying(true)}
-                onPause={() => setIsPdfAudioPlaying(false)}
-                preload="none"
-              />
-            )}
-          </div>
+                }
+              }}
+              onPlay={() => setIsPdfAudioPlaying(true)}
+              onPause={() => setIsPdfAudioPlaying(false)}
+              preload="none"
+            />
+          )}
 
           {showPdfAudioPlayer && showPdfAudioList && (
-            <div className="fixed inset-0 z-[16000] bg-blue-950/70 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setShowPdfAudioList(false)}>
+            <div className="fixed inset-0 z-[16000] bg-blue-950/75 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setShowPdfAudioList(false)}>
               <div className="w-full max-w-md rounded-[28px] border border-white/10 shadow-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, rgba(12,74,110,0.98), rgba(3,105,161,0.98))' }} onClick={e => e.stopPropagation()}>
                 <div className="px-6 py-5 flex items-center justify-between">
-                  <div className="text-white font-black text-sm tracking-tight">Audio Playlist</div>
+                  <div className="text-white font-black text-sm tracking-tight">শ্লোক অডিও প্লেলিস্ট</div>
                   <button className="p-2 bg-white/10 rounded-xl border border-white/10 text-white/90" onClick={() => setShowPdfAudioList(false)} aria-label="Close">
                     <X size={18} />
                   </button>
@@ -1610,6 +1869,12 @@ const App: React.FC = () => {
                           )}
                           <button
                             onClick={() => {
+                              if (!checkIsOnline()) {
+                                setIsPdfAudioPlaying(false);
+                                setPdfAudioError('অডিও শুনতে ইন্টারনেট সংযোগ লাগবে');
+                                setNoInternetReason('audio');
+                                return;
+                              }
                               setPdfAudioIndex(item.index);
                               setIsPdfAudioPlaying(true);
                             }}
@@ -1653,14 +1918,134 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div className={`${showPdfAudioPlayer ? 'pt-[92px]' : 'pt-[52px]'} w-full h-full`}>
-            <iframe
-              src={currentChapter.pdfUrl}
-              className="w-full h-full border-none m-0 p-0"
-              title={currentChapter.title}
-              allow="fullscreen"
-            />
-          </div>
+          <CustomPdfViewer
+            subjectName={currentSubject?.name}
+            title={currentChapter.title}
+            pdfUrl={currentChapter.pdfUrl}
+            cacheKey={getChapterCacheKey(currentSubject?.id || '1', currentChapter.id, currentChapter.pdfUrl)}
+            onBack={() => setView('chapters')}
+            hasAudioBar={showPdfAudioPlayer}
+            isAudioPlaying={isPdfAudioPlaying}
+            rotation={currentChapter.rotation || 0}
+            enhanceScan={!!currentChapter.enhanceScan}
+            isOffline={isOffline}
+            checkIsOnline={checkIsOnline}
+            onRequireInternetForAudio={() => setNoInternetReason('audio')}
+            audioBarNode={
+              showPdfAudioPlayer ? (
+                <div
+                  className="w-full rounded-2xl px-3 py-2 border border-white/10 shadow-md"
+                  style={{ backgroundColor: '#0c4a6e' }}
+                >
+                  <div className="flex items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Music size={15} className="text-sky-300 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="px-2 py-0.5 rounded-full bg-white/15 border border-white/10 text-white text-[10px] font-black tracking-tight">
+                            শ্লোক-{pdfAudioIndex + 1} / {pdfAudioUrls.length}
+                          </div>
+                          {isPdfAudioPlaying && (
+                            <div className="flex items-end gap-0.5 h-3" aria-label="Playing">
+                              <div className="w-0.5 bg-sky-300 rounded-full animate-pulse" style={{ height: '6px' }} />
+                              <div className="w-0.5 bg-sky-300 rounded-full animate-pulse" style={{ height: '10px', animationDelay: '120ms' }} />
+                              <div className="w-0.5 bg-sky-300 rounded-full animate-pulse" style={{ height: '7px', animationDelay: '240ms' }} />
+                              <div className="w-0.5 bg-sky-300 rounded-full animate-pulse" style={{ height: '11px', animationDelay: '360ms' }} />
+                            </div>
+                          )}
+                        </div>
+                        {pdfAudioError && (
+                          <div className="mt-0.5 text-[10px] font-bold text-rose-200 truncate">
+                            {pdfAudioError}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => {
+                          if (pdfAudioUrls.length <= 1) return;
+                          if (!checkIsOnline()) {
+                            setIsPdfAudioPlaying(false);
+                            setPdfAudioError('অডিও শুনতে ইন্টারনেট সংযোগ লাগবে');
+                            setNoInternetReason('audio');
+                            return;
+                          }
+                          setPdfAudioIndex(i => (i - 1 + pdfAudioUrls.length) % pdfAudioUrls.length);
+                          setIsPdfAudioPlaying(true);
+                        }}
+                        className="p-2 bg-white/10 rounded-xl border border-white/10 shadow-sm active:scale-90 transition-all"
+                        aria-label="Previous audio"
+                        disabled={pdfAudioUrls.length <= 1}
+                      >
+                        <SkipBack size={16} className={pdfAudioUrls.length <= 1 ? 'text-white/30' : 'text-white/90'} />
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const a = audioRef.current;
+                          if (!a) return;
+                          if (a.paused) {
+                            if (!checkIsOnline()) {
+                              setIsPdfAudioPlaying(false);
+                              setPdfAudioError('অডিও শুনতে ইন্টারনেট সংযোগ লাগবে');
+                              setNoInternetReason('audio');
+                              return;
+                            }
+                            setPdfAudioError(null);
+                            a.play().then(() => setIsPdfAudioPlaying(true)).catch(() => {
+                              setIsPdfAudioPlaying(false);
+                              setPdfAudioError(`শ্লোক-${pdfAudioIndex + 1} play করা যাচ্ছে না। ইন্টারনেট পরীক্ষা করুন।`);
+                            });
+                          } else {
+                            a.pause();
+                            setIsPdfAudioPlaying(false);
+                          }
+                        }}
+                        className="p-2 bg-white rounded-xl shadow-sm active:scale-90 transition-all"
+                        aria-label={isPdfAudioPlaying ? 'Pause audio' : 'Play audio'}
+                      >
+                        {isPdfAudioPlaying ? <Pause size={16} className="text-blue-900" /> : <Play size={16} className="text-blue-900 ml-0.5" />}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (pdfAudioUrls.length <= 1) return;
+                          if (!checkIsOnline()) {
+                            setIsPdfAudioPlaying(false);
+                            setPdfAudioError('অডিও শুনতে ইন্টারনেট সংযোগ লাগবে');
+                            setNoInternetReason('audio');
+                            return;
+                          }
+                          setPdfAudioIndex(i => (i + 1) % pdfAudioUrls.length);
+                          setIsPdfAudioPlaying(true);
+                        }}
+                        className="p-2 bg-white/10 rounded-xl border border-white/10 shadow-sm active:scale-90 transition-all"
+                        aria-label="Next audio"
+                        disabled={pdfAudioUrls.length <= 1}
+                      >
+                        <SkipForward size={16} className={pdfAudioUrls.length <= 1 ? 'text-white/30' : 'text-white/90'} />
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (!checkIsOnline()) {
+                            setNoInternetReason('audio');
+                            return;
+                          }
+                          setShowPdfAudioList(true);
+                        }}
+                        className="px-2.5 py-2 bg-white/15 rounded-xl border border-white/10 shadow-sm text-[10px] font-black text-white active:scale-95 transition-all"
+                      >
+                        শ্লোক
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null
+            }
+          />
         </div>
       )}
 
@@ -1679,10 +2064,52 @@ const App: React.FC = () => {
         </div>
       )}
       {view !== 'content' && (
-        <nav className="fixed bottom-4 left-4 right-4 fixed-bottom-nav px-6 py-3 flex justify-around items-center text-white/30">
-          <button onClick={() => { setView('subjects'); setCurrentSubject(null); }} className={`flex flex-col items-center gap-1 transition-all ${view==='subjects'?'text-sky-300 scale-110':'text-sky-100/30'}`}><Home size={22}/><span className="text-[8px] font-bold uppercase tracking-tighter">Home</span></button>
-          <button onClick={() => setIsSearchOpen(true)} className={`flex flex-col items-center gap-1 transition-all ${isSearchOpen?'text-sky-300 scale-110':'text-sky-100/30'}`}><Search size={22}/><span className="text-[8px] font-bold uppercase tracking-tighter">Search</span></button>
-          <button onClick={() => handleToolClick(activeTool)} className={`flex flex-col items-center gap-1 transition-all ${view==='tools'?'text-sky-300 scale-110':'text-sky-100/30'}`}><Wrench size={22}/><span className="text-[8px] font-bold uppercase tracking-tighter">Tools</span></button>
+        <nav className="fixed bottom-4 left-4 right-4 fixed-bottom-nav px-4 py-3 flex justify-around items-center text-white/30">
+          <button
+            onClick={() => { setIsSearchOpen(false); setView('subjects'); setCurrentSubject(null); }}
+            className={`flex flex-col items-center gap-1 transition-all ${view==='subjects' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
+          >
+            <Home size={21}/>
+            <span className="text-[9px] font-bold tracking-tight">Home</span>
+          </button>
+
+          <button
+            onClick={() => {
+              if (!checkIsOnline()) {
+                setNoInternetReason('audio');
+                return;
+              }
+              setIsSearchOpen(false);
+              if (view === 'gitaAudio' && gitaAudioChapterId) {
+                setGitaAudioChapterId(null);
+              } else {
+                setView('gitaAudio');
+              }
+            }}
+            className={`relative flex flex-col items-center gap-1 transition-all ${view==='gitaAudio' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
+          >
+            <Headphones size={21} className={isStandaloneGitaAudioPlaying ? 'animate-pulse' : ''} />
+            <span className="text-[9px] font-bold tracking-tight">গীতা অডিও</span>
+            {isStandaloneGitaAudioPlaying && (
+              <span className="absolute -top-0.5 right-1 w-2 h-2 rounded-full bg-emerald-400" />
+            )}
+          </button>
+
+          <button
+            onClick={() => setIsSearchOpen(true)}
+            className={`flex flex-col items-center gap-1 transition-all ${isSearchOpen?'text-sky-300 scale-110':'text-sky-100/40'}`}
+          >
+            <Search size={21}/>
+            <span className="text-[9px] font-bold tracking-tight">Search</span>
+          </button>
+
+          <button
+            onClick={() => { setIsSearchOpen(false); handleToolClick(activeTool); }}
+            className={`flex flex-col items-center gap-1 transition-all ${view==='tools' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
+          >
+            <Wrench size={21}/>
+            <span className="text-[9px] font-bold tracking-tight">Tools</span>
+          </button>
         </nav>
       )}
 

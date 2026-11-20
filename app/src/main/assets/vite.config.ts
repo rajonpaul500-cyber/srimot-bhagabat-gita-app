@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
       base: './',
       build: {
         outDir: 'www',
-        emptyOutDir: true,
+        emptyOutDir: false,
       },
       server: {
         port: 3000,

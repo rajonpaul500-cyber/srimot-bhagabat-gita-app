@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>শ্রীমদ্ভগবদ গীতা যথাযথ | অডিও সহ</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="./pdfjs/pdf.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Galada&family=Noto+Sans+Bengali:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         @font-face {
@@ -52,6 +53,18 @@
         h1, h2, h3, .brand-font {
             font-family: 'Kalpurush', sans-serif;
             font-weight: bold;
+        }
+
+        @keyframes flipNext {
+            0% { transform: rotateY(0deg); opacity: 1; }
+            50% { transform: rotateY(-35deg) scale(0.97); opacity: 0.8; }
+            100% { transform: rotateY(0deg); opacity: 1; }
+        }
+
+        @keyframes flipPrev {
+            0% { transform: rotateY(0deg); opacity: 1; }
+            50% { transform: rotateY(35deg) scale(0.97); opacity: 0.8; }
+            100% { transform: rotateY(0deg); opacity: 1; }
         }
 
         .floating-header {
