@@ -79,23 +79,10 @@ export const CustomPdfViewer: React.FC<CustomPdfViewerProps> = ({
   checkIsOnline,
   onRequireInternetForAudio
 }) => {
-  const [theme, setTheme] = useState<'day' | 'night'>(() => {
-    try {
-      const saved = localStorage.getItem('pdf_viewer_theme');
-      return saved === 'day' ? 'day' : 'night';
-    } catch {
-      return 'night';
-    }
-  });
+  const [theme, setTheme] = useState<'day' | 'night'>('day');
 
   const toggleTheme = () => {
-    setTheme(prev => {
-      const next = prev === 'day' ? 'night' : 'day';
-      try {
-        localStorage.setItem('pdf_viewer_theme', next);
-      } catch {}
-      return next;
-    });
+    setTheme(prev => (prev === 'day' ? 'night' : 'day'));
   };
 
   // Modals & UI toggles
@@ -615,11 +602,12 @@ export const CustomPdfViewer: React.FC<CustomPdfViewerProps> = ({
     >
       {/* Unified Single Top Bar (Back + Subject/Chapter + Dark/Light + Notes + Add Note + Page Grid) */}
       <header
-        className={`shrink-0 px-2.5 py-2 flex items-center justify-between gap-2 border-b shadow-sm z-30 ${
+        className={`shrink-0 px-2.5 pb-2 flex items-center justify-between gap-2 border-b shadow-sm z-30 ${
           isNight
             ? 'bg-[#14161b] border-white/10 text-white'
             : 'bg-white border-slate-200 text-slate-900'
         }`}
+        style={{ paddingTop: 'calc(var(--safe-top, 0px) + 8px)' }}
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
@@ -790,7 +778,9 @@ export const CustomPdfViewer: React.FC<CustomPdfViewerProps> = ({
                 : 'bg-white/95 border-slate-200/90 text-slate-700'
             }`}
             style={{
-              top: hasAudioBar && showAudioBarPanel ? '138px' : '68px'
+              top: hasAudioBar && showAudioBarPanel
+                ? 'calc(var(--safe-top, 0px) + 142px)'
+                : 'calc(var(--safe-top, 0px) + 72px)'
             }}
           >
             <button
@@ -955,11 +945,12 @@ export const CustomPdfViewer: React.FC<CustomPdfViewerProps> = ({
 
       {/* Bottom Navigation Bar (Matching Reference Screenshot) */}
       <footer
-        className={`shrink-0 px-2.5 py-2 flex items-center justify-between gap-1 border-t shadow-lg z-30 ${
+        className={`shrink-0 px-2.5 pt-2 flex items-center justify-between gap-1 border-t shadow-lg z-30 ${
           isNight
             ? 'bg-[#12151a] border-white/10 text-slate-200'
             : 'bg-white border-slate-200 text-slate-800'
         }`}
+        style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 8px)' }}
       >
         {/* Left & Center Page Navigation Group */}
         <div className="flex items-center gap-1.5 flex-1 justify-center">

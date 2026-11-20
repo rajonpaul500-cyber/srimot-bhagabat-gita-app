@@ -2,7 +2,7 @@
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>শ্রীমদ্ভগবদ গীতা যথাযথ | অডিও সহ</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="./pdfjs/pdf.min.js"></script>
@@ -17,6 +17,8 @@
         }
 
         :root {
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
             --primary-blue: #0369a1; /* Deep Sky Blue */
             --secondary-blue: #075985; /* Darker Blue */
             --accent-sky: #e0f2fe;
@@ -29,8 +31,7 @@
             font-family: 'Kalpurush', 'Noto Sans Bengali', sans-serif;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
-            background: var(--bg-gradient);
-            background-attachment: fixed;
+            background: transparent;
             color: #0c4a6e;
             margin: 0;
             padding: 0;
@@ -178,7 +179,7 @@
   }
 }
 </script>
-  <script type="module" crossorigin src="./assets/index-CnTSrvKz.js"></script>
+  <script type="module" crossorigin src="./assets/index-DqPcWHLw.js"></script>
 </head>
 <body class="overflow-x-hidden">
     <div id="root"></div>

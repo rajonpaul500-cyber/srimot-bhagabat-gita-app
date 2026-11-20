@@ -52,6 +52,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdView
@@ -81,6 +85,15 @@ class MainActivity : ComponentActivity() {
     private var isBannerLoaded = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var isOverlayDismissed = false
+    private var systemTopInsetPx: Int = 0
+    private var systemBottomInsetPx: Int = 0
+    private var systemLeftInsetPx: Int = 0
+    private var systemRightInsetPx: Int = 0
+    private var imeBottomInsetPx: Int = 0
+    private var systemTopInsetCssPx: Int = 0
+    private var systemBottomInsetCssPx: Int = 0
+    private var systemLeftInsetCssPx: Int = 0
+    private var systemRightInsetCssPx: Int = 0
 
     // Native PdfRenderer cache (avoids loading 28MB+ PDFs into WebView JS heap / prevents renderer crashes)
     private val pdfRendererLock = Any()
@@ -369,11 +382,26 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
-        webView.setBackgroundColor(0)
+        webView.setBackgroundColor(Color.TRANSPARENT)
+
+        val rootBg = findViewById<ImageView>(R.id.rootBackgroundImage)
+        if (rootBg != null) {
+            Glide.with(this)
+                .load("file:///android_asset/Image/Baground.jpg")
+                .centerCrop()
+                .into(rootBg)
+        }
 
         val splashOverlayBg = findViewById<ImageView>(R.id.splashOverlayBackground)
         if (splashOverlayBg != null) {
@@ -381,6 +409,56 @@ class MainActivity : ComponentActivity() {
                 .load("file:///android_asset/Image/Baground.jpg")
                 .centerCrop()
                 .into(splashOverlayBg)
+        }
+
+        val rootContainer = findViewById<View>(R.id.rootContainer)
+        val splashOverlayTitle = findViewById<View>(R.id.splashOverlayTitle)
+        val baseOverlayTitleTop = (splashOverlayTitle?.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+        if (rootContainer != null) {
+            ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { _, windowInsets ->
+                val sysBars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+                )
+                val imeInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+                systemTopInsetPx = sysBars.top
+                systemBottomInsetPx = sysBars.bottom
+                systemLeftInsetPx = sysBars.left
+                systemRightInsetPx = sysBars.right
+                imeBottomInsetPx = imeInsets.bottom
+
+                val density = resources.displayMetrics.density.coerceAtLeast(1f)
+                systemTopInsetCssPx = Math.ceil((sysBars.top / density).toDouble()).toInt()
+                systemBottomInsetCssPx = Math.ceil((sysBars.bottom / density).toDouble()).toInt()
+                systemLeftInsetCssPx = Math.ceil((sysBars.left / density).toDouble()).toInt()
+                systemRightInsetCssPx = Math.ceil((sysBars.right / density).toDouble()).toInt()
+
+                if (splashOverlayTitle != null) {
+                    val lp = splashOverlayTitle.layoutParams as? ViewGroup.MarginLayoutParams
+                    if (lp != null && lp.topMargin != baseOverlayTitleTop + sysBars.top) {
+                        lp.topMargin = baseOverlayTitleTop + sysBars.top
+                        splashOverlayTitle.layoutParams = lp
+                    }
+                }
+
+                val adContainer = findViewById<View>(R.id.adContainer)
+                val bottomInsetForNative = maxOf(sysBars.bottom, imeInsets.bottom)
+                if (adContainer != null && adContainer.visibility == View.VISIBLE) {
+                    adContainer.setPadding(
+                        sysBars.left,
+                        adContainer.paddingTop,
+                        sysBars.right,
+                        bottomInsetForNative
+                    )
+                    webView.setPadding(sysBars.left, 0, sysBars.right, 0)
+                } else {
+                    adContainer?.setPadding(sysBars.left, adContainer.paddingTop, sysBars.right, sysBars.bottom)
+                    webView.setPadding(sysBars.left, 0, sysBars.right, imeInsets.bottom)
+                }
+
+                injectSystemBarInsetsToWeb()
+                windowInsets
+            }
+            ViewCompat.requestApplyInsets(rootContainer)
         }
 
         Handler(Looper.getMainLooper()).postDelayed({
@@ -707,7 +785,9 @@ class MainActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
+                injectSystemBarInsetsToWeb()
                 view.postDelayed({
+                    injectSystemBarInsetsToWeb()
                     dismissLoadingOverlay()
                 }, 100L)
             }
@@ -1278,8 +1358,23 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun onAppReady() {
             runOnUiThread {
+                injectSystemBarInsetsToWeb()
                 dismissLoadingOverlay()
             }
+        }
+
+        @JavascriptInterface
+        fun getSystemInsets(): String {
+            val adContainerVisible = try {
+                findViewById<View>(R.id.adContainer)?.visibility == View.VISIBLE
+            } catch (_: Exception) {
+                false
+            }
+            val effectiveBottomCss = if (adContainerVisible) 0 else systemBottomInsetCssPx
+            return JSONObject().apply {
+                put("top", systemTopInsetCssPx)
+                put("bottom", effectiveBottomCss)
+            }.toString()
         }
 
         @JavascriptInterface
@@ -1390,6 +1485,27 @@ class MainActivity : ComponentActivity() {
         ad.show(this)
     }
 
+    private fun injectSystemBarInsetsToWeb() {
+        if (!::webView.isInitialized || isFinishing || isDestroyed) return
+        val adContainerVisible = try {
+            findViewById<View>(R.id.adContainer)?.visibility == View.VISIBLE
+        } catch (_: Exception) {
+            false
+        }
+        val topCss = systemTopInsetCssPx
+        val bottomCss = if (adContainerVisible || imeBottomInsetPx > 0) 0 else systemBottomInsetCssPx
+        val leftCss = systemLeftInsetCssPx
+        val rightCss = systemRightInsetCssPx
+        webView.post {
+            try {
+                webView.evaluateJavascript(
+                    "(function(){var r=document.documentElement;if(r){r.style.setProperty('--safe-top','${topCss}px');r.style.setProperty('--safe-bottom','${bottomCss}px');r.style.setProperty('--safe-left','${leftCss}px');r.style.setProperty('--safe-right','${rightCss}px');}})();",
+                    null
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun applyBannerVisibility() {
         if (isFinishing || isDestroyed) return
         val adContainer = findViewById<View>(R.id.adContainer) ?: return
@@ -1397,6 +1513,13 @@ class MainActivity : ComponentActivity() {
         val shouldShow = isBannerRequestedVisible && isAdsConfigured && isOnline()
 
         if (shouldShow) {
+            adContainer.setPadding(
+                systemLeftInsetPx,
+                adContainer.paddingTop,
+                systemRightInsetPx,
+                maxOf(systemBottomInsetPx, imeBottomInsetPx)
+            )
+            webView.setPadding(systemLeftInsetPx, 0, systemRightInsetPx, 0)
             adContainer.visibility = View.VISIBLE
             try {
                 adView?.resume()
@@ -1415,10 +1538,12 @@ class MainActivity : ComponentActivity() {
             }
         } else {
             adContainer.visibility = View.GONE
+            webView.setPadding(systemLeftInsetPx, 0, systemRightInsetPx, imeBottomInsetPx)
             try {
                 adView?.pause()
             } catch (_: Exception) {}
         }
+        injectSystemBarInsetsToWeb()
     }
 
     private fun isAppOpenAdAvailable(): Boolean {

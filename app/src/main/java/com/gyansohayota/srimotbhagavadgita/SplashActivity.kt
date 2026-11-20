@@ -4,13 +4,20 @@ import android.animation.Animator
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.content.Intent
+import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.bumptech.glide.Glide
 
 class SplashActivity : ComponentActivity() {
@@ -20,7 +27,14 @@ class SplashActivity : ComponentActivity() {
     private val runningAnimators = mutableListOf<Animator>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         setContentView(R.layout.activity_splash)
 
         val backgroundImageView = findViewById<ImageView>(R.id.backgroundImageView)
@@ -30,6 +44,45 @@ class SplashActivity : ComponentActivity() {
         val starOne = findViewById<TextView>(R.id.starOne)
         val starTwo = findViewById<TextView>(R.id.starTwo)
         val starThree = findViewById<TextView>(R.id.starThree)
+
+        val baseTitleTop = (titleText.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+        val baseTitleLeft = (titleText.layoutParams as? ViewGroup.MarginLayoutParams)?.marginStart ?: 0
+        val baseTitleRight = (titleText.layoutParams as? ViewGroup.MarginLayoutParams)?.marginEnd ?: 0
+        val baseGlowTop = (titleGlow.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+        val baseStar1Top = (starOne.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+        val baseStar2Top = (starTwo.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+        val baseStar3Top = (starThree.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+
+        val contentRoot = window.decorView.findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(contentRoot) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            fun applyTop(v: View, base: Int) {
+                val lp = v.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+                if (lp.topMargin != base + bars.top) {
+                    lp.topMargin = base + bars.top
+                    v.layoutParams = lp
+                }
+            }
+            (titleText.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
+                val newTop = baseTitleTop + bars.top
+                val newStart = baseTitleLeft + bars.left
+                val newEnd = baseTitleRight + bars.right
+                if (lp.topMargin != newTop || lp.marginStart != newStart || lp.marginEnd != newEnd) {
+                    lp.topMargin = newTop
+                    lp.marginStart = newStart
+                    lp.marginEnd = newEnd
+                    titleText.layoutParams = lp
+                }
+            }
+            applyTop(titleGlow, baseGlowTop)
+            applyTop(starOne, baseStar1Top)
+            applyTop(starTwo, baseStar2Top)
+            applyTop(starThree, baseStar3Top)
+            insets
+        }
+        ViewCompat.requestApplyInsets(contentRoot)
 
         Glide.with(this)
             .load("file:///android_asset/Image/Baground.jpg")

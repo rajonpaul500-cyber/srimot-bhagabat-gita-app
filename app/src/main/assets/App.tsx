@@ -16,6 +16,7 @@ declare global {
       triggerInterstitialAdWithAction?: (action: string) => void;
       setBannerVisible?: (visible: boolean) => void;
       isNetworkAvailable?: () => boolean;
+      getSystemInsets?: () => string;
       openExternalUrl?: (url: string) => void;
       exitApp?: () => void;
       sendTestVaishnavNotification?: () => void;
@@ -827,6 +828,24 @@ const App: React.FC = () => {
     window.Android?.setBannerVisible?.(shouldShowBanner);
   }, [view, isSearchOpen, isOffline]);
 
+  // Sync native status-bar & navigation-bar safe insets immediately on mount
+  useEffect(() => {
+    try {
+      const raw = window.Android?.getSystemInsets?.();
+      if (raw) {
+        const parsed = JSON.parse(raw) as { top?: number; bottom?: number };
+        if (typeof parsed.top === 'number') {
+          document.documentElement.style.setProperty('--safe-top', `${parsed.top}px`);
+        }
+        if (typeof parsed.bottom === 'number') {
+          document.documentElement.style.setProperty('--safe-bottom', `${parsed.bottom}px`);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     if (view !== 'content') {
       const a = audioRef.current;
@@ -1064,17 +1083,47 @@ const App: React.FC = () => {
     const openTool = () => {
       setActiveTool(toolId);
       setView('tools');
+    };
+
+    if (!ADS_ENABLED) {
+      openTool();
+      return;
     }
 
-    if (!shouldShowInterstitialNow()) {
-      openTool()
-      return
+    lastInterstitialActionRef.current = userActionCounterRef.current;
+    lastInterstitialTsRef.current = Date.now();
+    const actionKey = `open_tool_${toolId}_${Date.now()}`;
+    runWithInterstitial(actionKey, openTool);
+  };
+
+  const handleGitaAudioClick = () => {
+    if (!checkIsOnline()) {
+      setNoInternetReason('audio');
+      return;
+    }
+    setIsSearchOpen(false);
+    if (view === 'gitaAudio') {
+      if (gitaAudioChapterId) {
+        setGitaAudioChapterId(null);
+      }
+      return;
     }
 
-    lastInterstitialActionRef.current = userActionCounterRef.current
-    lastInterstitialTsRef.current = Date.now()
-    const actionKey = `open_tool_${toolId}_${Date.now()}`
-    runWithInterstitial(actionKey, openTool)
+    userActionCounterRef.current += 1;
+    const openAudio = () => {
+      setGitaAudioChapterId(null);
+      setView('gitaAudio');
+    };
+
+    if (!ADS_ENABLED) {
+      openAudio();
+      return;
+    }
+
+    lastInterstitialActionRef.current = userActionCounterRef.current;
+    lastInterstitialTsRef.current = Date.now();
+    const actionKey = `open_gita_audio_${Date.now()}`;
+    runWithInterstitial(actionKey, openAudio);
   };
 
   const handleBack = useCallback(() => {
@@ -1169,19 +1218,23 @@ const App: React.FC = () => {
 
   return (
     <div
-      className="relative min-h-screen pb-32 overflow-x-hidden selection:bg-blue-200"
+      className="relative min-h-screen overflow-x-hidden selection:bg-blue-200"
       style={{
         backgroundImage: `url(${BACKGROUND_IMAGE})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        backgroundAttachment: 'fixed'
+        backgroundAttachment: 'fixed',
+        paddingBottom: 'calc(var(--safe-bottom, 0px) + 112px)'
       }}
     >
       <div className="bird-container">
         {[...Array(5)].map((_, i) => (<div key={i} className="bird" style={{ top: `${10 + i * 20}%`, animationDuration: `${16 + Math.random() * 8}s`, animationDelay: `${i * 2}s` }} />))}
       </div>
 
-      <header className="fixed top-4 left-4 right-4 h-18 floating-header flex items-center justify-between px-6 py-2">
+      <header
+        className="fixed left-4 right-4 h-18 floating-header flex items-center justify-between px-6 py-2"
+        style={{ top: 'calc(var(--safe-top, 0px) + 12px)' }}
+      >
         <div className="flex items-center gap-3">
           {view === 'subjects' ? (
             <button onClick={toggleDrawer} className="h-10 w-10 flex flex-col justify-center gap-1.5 p-2 bg-white/10 rounded-lg transition-transform active:scale-90">
@@ -1196,7 +1249,10 @@ const App: React.FC = () => {
         <div className="h-12 w-12 bg-white/20 rounded-xl p-0 overflow-hidden shadow-lg transition-transform active:scale-95"><img src={LOGO_GIF} className="w-full h-full object-cover" /></div>
       </header>
 
-      <main className="pt-24 px-4 z-10 relative max-w-2xl mx-auto">
+      <main
+        className="px-4 z-10 relative max-w-2xl mx-auto"
+        style={{ paddingTop: 'calc(var(--safe-top, 0px) + 92px)' }}
+      >
         {view === 'subjects' && (
           <div className="space-y-4">
             <div className="animate-in slide-in-from-top-2 duration-500 mb-6">
@@ -2051,7 +2107,10 @@ const App: React.FC = () => {
 
       {/* High-end Floating Update Coming Soon Notification */}
       {showComingSoon && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[11000] animate-in slide-in-from-top-6 fade-in duration-500 pointer-events-none">
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-[11000] animate-in slide-in-from-top-6 fade-in duration-500 pointer-events-none"
+          style={{ top: 'calc(var(--safe-top, 0px) + 76px)' }}
+        >
           <div className="bg-blue-950/95 backdrop-blur-[30px] px-8 py-5 rounded-[32px] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] border border-white/20 flex items-center gap-4">
             <div className="h-10 w-10 bg-sky-400/20 rounded-2xl flex items-center justify-center animate-bounce">
               <AlertCircle size={22} className="text-sky-300" />
@@ -2064,7 +2123,10 @@ const App: React.FC = () => {
         </div>
       )}
       {view !== 'content' && (
-        <nav className="fixed bottom-4 left-4 right-4 fixed-bottom-nav px-4 py-3 flex justify-around items-center text-white/30">
+        <nav
+          className="fixed left-4 right-4 fixed-bottom-nav px-4 py-3 flex justify-around items-center text-white/30"
+          style={{ bottom: 'calc(var(--safe-bottom, 0px) + 12px)' }}
+        >
           <button
             onClick={() => { setIsSearchOpen(false); setView('subjects'); setCurrentSubject(null); }}
             className={`flex flex-col items-center gap-1 transition-all ${view==='subjects' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
@@ -2074,18 +2136,7 @@ const App: React.FC = () => {
           </button>
 
           <button
-            onClick={() => {
-              if (!checkIsOnline()) {
-                setNoInternetReason('audio');
-                return;
-              }
-              setIsSearchOpen(false);
-              if (view === 'gitaAudio' && gitaAudioChapterId) {
-                setGitaAudioChapterId(null);
-              } else {
-                setView('gitaAudio');
-              }
-            }}
+            onClick={handleGitaAudioClick}
             className={`relative flex flex-col items-center gap-1 transition-all ${view==='gitaAudio' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
           >
             <Headphones size={21} className={isStandaloneGitaAudioPlaying ? 'animate-pulse' : ''} />
@@ -2104,18 +2155,24 @@ const App: React.FC = () => {
           </button>
 
           <button
-            onClick={() => { setIsSearchOpen(false); handleToolClick(activeTool); }}
-            className={`flex flex-col items-center gap-1 transition-all ${view==='tools' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
+            onClick={() => { setIsSearchOpen(false); handleToolClick('vaishnavCalendar'); }}
+            className={`flex flex-col items-center gap-1 transition-all ${view==='tools' && activeTool==='vaishnavCalendar' && !isSearchOpen ?'text-sky-300 scale-110':'text-sky-100/40'}`}
           >
-            <Wrench size={21}/>
-            <span className="text-[9px] font-bold tracking-tight">Tools</span>
+            <CalendarDays size={21}/>
+            <span className="text-[9px] font-bold tracking-tight whitespace-nowrap">বৈষ্ণব ক্যালেন্ডার</span>
           </button>
         </nav>
       )}
 
       {/* Extreme Zoom Search Overlay */}
       {isSearchOpen && (
-        <div className="fixed inset-0 bg-blue-950/98 backdrop-blur-[40px] z-[8000] flex flex-col animate-in fade-in zoom-in-75 slide-in-from-bottom-12 duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]">
+        <div
+          className="fixed inset-0 bg-blue-950/98 backdrop-blur-[40px] z-[8000] flex flex-col animate-in fade-in zoom-in-75 slide-in-from-bottom-12 duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]"
+          style={{
+            paddingTop: 'var(--safe-top, 0px)',
+            paddingBottom: 'var(--safe-bottom, 0px)'
+          }}
+        >
           <div className="flex flex-col p-6 h-full origin-center">
             <div className="flex gap-4 mb-10 mt-4 animate-in slide-in-from-top-6 duration-700 delay-150 fill-mode-both">
               <div className="relative flex-1 group">
@@ -2179,7 +2236,14 @@ const App: React.FC = () => {
 
       {/* Drawer Overlay */}
       <div className={`fixed inset-0 bg-blue-950/60 backdrop-blur-md z-[5000] transition-opacity duration-300 ${isDrawerOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`} onClick={toggleDrawer}>
-        <div className={`absolute top-4 left-4 h-[calc(100%-32px)] w-[88%] max-w-[340px] drawer-card transition-transform duration-500 shadow-2xl flex flex-col ${isDrawerOpen ? 'translate-x-0' : '-translate-x-[110%]'}`} onClick={e=>e.stopPropagation()}>
+        <div
+          className={`absolute left-4 w-[88%] max-w-[340px] drawer-card transition-transform duration-500 shadow-2xl flex flex-col ${isDrawerOpen ? 'translate-x-0' : '-translate-x-[110%]'}`}
+          style={{
+            top: 'calc(var(--safe-top, 0px) + 12px)',
+            bottom: 'calc(var(--safe-bottom, 0px) + 12px)'
+          }}
+          onClick={e=>e.stopPropagation()}
+        >
           <div className="p-8 relative shrink-0">
             <button onClick={toggleDrawer} className="absolute top-8 right-8 text-white/50"><X size={30}/></button>
             <div className="flex flex-col items-center text-center mt-6">
